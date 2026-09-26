@@ -1792,13 +1792,23 @@
   }
   .student-row {
     display: grid;
-    grid-template-columns: 1.2fr 1fr 1.4fr 1fr 0.6fr;
+    grid-template-columns: 1.1fr 0.9fr 1.3fr 1.2fr 1.3fr 0.9fr 0.5fr;
     gap: 10px;
     padding: 10px 12px;
     border-radius: var(--radius);
-    font-size: 15px;
+    font-size: 14px;
     align-items: center;
   }
+  .student-row-subjects { display: flex; flex-wrap: wrap; gap: 4px; }
+  .student-subject-chip {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .student-login-info { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
   .add-student-form {
     display: flex;
     flex-wrap: wrap;
@@ -2596,11 +2606,12 @@ function Watermark({ text }) {
   );
 }
 
-function VideoPlayerModal({ lesson, student, onClose }) {
+function VideoPlayerModal({ lesson, student, onClose, onSecurityEvent }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const timerRef = useRef(null);
   const videoRef = useRef(null);
+  const devtoolsFlagged = useRef(false);
   const hasRealVideo = !!lesson.videoUrl;
 
   useEffect(() => {
@@ -2614,6 +2625,31 @@ function VideoPlayerModal({ lesson, student, onClose }) {
     }
     return () => clearInterval(timerRef.current);
   }, [playing, hasRealVideo]);
+
+  // مراقبة محاولات التلاعب وقت مشاهدة الفيديو: تحميل (Ctrl+S)، فتح أدوات
+  // المطور (F12 / Ctrl+Shift+I)، أو لقطة شاشة (PrintScreen). كل واحدة
+  // بتتسجل مرة واحدة بس في الجلسة دي عشان محدش يمتلي سجل الأمان بتكرار.
+  useEffect(() => {
+    function handleKeyDown(e) {
+      const key = (e.key || "").toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && key === "s") {
+        e.preventDefault();
+        onSecurityEvent && onSecurityEvent("download_attempt", `الدرس: ${lesson.title} (Ctrl+S)`);
+      } else if (
+        key === "f12" ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && ["i", "j", "c"].includes(key))
+      ) {
+        if (!devtoolsFlagged.current) {
+          devtoolsFlagged.current = true;
+          onSecurityEvent && onSecurityEvent("devtools_attempt", `الدرس: ${lesson.title} (اختصار فتح أدوات المطور)`);
+        }
+      } else if (key === "printscreen") {
+        onSecurityEvent && onSecurityEvent("screenshot_attempt", `الدرس: ${lesson.title} (PrintScreen)`);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [lesson.title, onSecurityEvent]);
 
   function togglePlay() {
     if (hasRealVideo && videoRef.current) {
@@ -2636,7 +2672,10 @@ function VideoPlayerModal({ lesson, student, onClose }) {
       <div
         className="player-card"
         onClick={(e) => e.stopPropagation()}
-        onContextMenu={(e) => e.preventDefault()}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onSecurityEvent && onSecurityEvent("right_click_video", `الدرس: ${lesson.title}`);
+        }}
       >
         <div className="player-header">
           <div>
@@ -2865,6 +2904,9 @@ function AdminDashboard({
   studentsLoading,
   studentsError,
   loadAllStudents,
+  enrollmentsByStudent,
+  lastLoginByStudent,
+  securityEvents,
   newStudentForm,
   setNewStudentForm,
   addStudent,
@@ -2908,6 +2950,7 @@ function AdminDashboard({
     { key: "testbank", icon: "📦", label: "بنك الأسئلة" },
     { key: "announcements", icon: "📢", label: "الإشعارات" },
     { key: "students", icon: "👥", label: "الطلاب المسجلين" },
+    { key: "security", icon: "🛡️", label: "سجل الأمان" },
     { key: "discussions", icon: "💬", label: "غرف النقاش" },
     { key: "settings", icon: "⚙️", label: "إعدادات المنصة" },
     { key: "graphics", icon: "🖼️", label: "صور وبانر الصفحة الرئيسية" },
@@ -3359,26 +3402,90 @@ function AdminDashboard({
               <span>الاسم</span>
               <span>رقم الهاتف</span>
               <span>البريد الإلكتروني</span>
+              <span>المواد المسجل فيها</span>
+              <span>آخر دخول</span>
               <span>تاريخ التسجيل</span>
               <span></span>
             </div>
-            {students.map((s) => (
-              <div className="student-row" key={s.id}>
-                <span>{s.name}</span>
-                <span>{s.phone}</span>
-                <span>{s.email}</span>
-                <span>{s.registeredAt ? new Date(s.registeredAt).toLocaleDateString("ar-EG") : "—"}</span>
-                <button
-                  className="delete-btn"
-                  disabled={deletingStudentId === s.id}
-                  onClick={() => deleteStudent(s.id)}
-                  aria-label="حذف الطالب"
-                >{deletingStudentId === s.id ? "..." : "🗑"}</button>
-              </div>
-            ))}
+            {students.map((s) => {
+              const enrolledIds = enrollmentsByStudent[s.id] || [];
+              const enrolledNames = enrolledIds.map((cid) => channels.find((c) => c.id === cid)?.name || cid);
+              const lastLogin = lastLoginByStudent[s.id];
+              return (
+                <div className="student-row" key={s.id}>
+                  <span>{s.name}</span>
+                  <span>{s.phone}</span>
+                  <span>{s.email}</span>
+                  <span className="student-row-subjects">
+                    {enrolledNames.length === 0 ? (
+                      <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>
+                    ) : (
+                      enrolledNames.map((n, i) => <span className="student-subject-chip" key={i}>{n}</span>)
+                    )}
+                  </span>
+                  <span className="student-login-info">
+                    {lastLogin ? (
+                      <React.Fragment>
+                        {lastLogin.country || "دولة غير معروفة"}{lastLogin.city ? ` — ${lastLogin.city}` : ""}<br />
+                        {lastLogin.ip || "—"}<br />
+                        {new Date(lastLogin.created_at).toLocaleString("ar-EG")}
+                      </React.Fragment>
+                    ) : "—"}
+                  </span>
+                  <span>{s.registeredAt ? new Date(s.registeredAt).toLocaleDateString("ar-EG") : "—"}</span>
+                  <button
+                    className="delete-btn"
+                    disabled={deletingStudentId === s.id}
+                    onClick={() => deleteStudent(s.id)}
+                    aria-label="حذف الطالب"
+                  >{deletingStudentId === s.id ? "..." : "🗑"}</button>
+                </div>
+              );
+            })}
           </div>
         )}
         <div className="settings-note">حذف الطالب بيمسح حسابه بالكامل (تسجيل الدخول + بياناته + اشتراكاته) ومش هيقدر يدخل تاني.</div>
+      </div>
+          )}
+
+          {adminSection === "security" && (
+      <div className="dash-panel" style={{ marginTop: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3>سجل الأمان — محاولات التلاعب المشبوهة</h3>
+          <button className="ghost-link" type="button" onClick={loadAllStudents} disabled={studentsLoading}>
+            🔄 تحديث
+          </button>
+        </div>
+        <div className="settings-note" style={{ marginBottom: 14 }}>
+          كل مرة طالب يحاول يحمّل فيديو، يفتح أدوات المطور، أو يدوس يمين الماوس على الفيديو، بيتسجل هنا فورًا.
+        </div>
+        {securityEvents.length === 0 ? (
+          <div className="empty-state">مفيش أي نشاط مشبوه متسجل لحد دلوقتي.</div>
+        ) : (
+          <div className="dash-lesson-list">
+            {securityEvents.map((ev, i) => {
+              const s = students.find((st) => st.id === ev.student_id);
+              const channelName = channels.find((c) => c.id === ev.channel_id)?.name;
+              const labels = {
+                right_click_video: "🖱️ يمين ماوس على الفيديو",
+                download_attempt: "⬇️ محاولة تحميل (Ctrl+S)",
+                devtools_attempt: "🛠️ محاولة فتح أدوات المطور",
+                screenshot_attempt: "📸 محاولة لقطة شاشة",
+              };
+              return (
+                <div className="code-row" key={i} style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+                  <div style={{ fontWeight: 700 }}>{labels[ev.event_type] || ev.event_type}</div>
+                  <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                    {s ? `${s.name} (${s.phone})` : "طالب غير معروف"}
+                    {channelName ? ` — ${channelName}` : ""}
+                  </div>
+                  {ev.details && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{ev.details}</div>}
+                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{new Date(ev.created_at).toLocaleString("ar-EG")}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
           )}
 
@@ -3750,6 +3857,9 @@ function EduPlatformDemo() {
   const [adminLoginError, setAdminLoginError] = useState("");
   const [adminLoginBusy, setAdminLoginBusy] = useState(false);
   const [studentsLoading, setStudentsLoading] = useState(false);
+  const [enrollmentsByStudent, setEnrollmentsByStudent] = useState({});
+  const [lastLoginByStudent, setLastLoginByStudent] = useState({});
+  const [securityEvents, setSecurityEvents] = useState([]);
   const [studentsError, setStudentsError] = useState("");
   const [newStudentForm, setNewStudentForm] = useState({ name: "", phone: "", email: "" });
   const [addStudentBusy, setAddStudentBusy] = useState(false);
@@ -4087,27 +4197,56 @@ function EduPlatformDemo() {
       return;
     }
 
-    const userId = signUpData?.user?.id;
+    let userId = signUpData?.user?.id;
+    let activeSession = signUpData?.session;
+
+    // لو الإيميل ده مسجل قبل كده أصلاً (رسالة "already registered")، مفيش
+    // user/session راجعين من signUp، فبنعمل تسجيل دخول عادي بدلها عشان
+    // نلحق نصلح صف الطالب في القاعدة لو كان ضايع من قبل.
+    if (!userId) {
+      const { data: signInData, error: signInErr } = await supabaseClient.auth.signInWithPassword({
+        email: student.email.trim(),
+        password: passwordVal,
+      });
+      if (signInErr) {
+        setOtpError(
+          signInErr.message.toLowerCase().includes("confirm")
+            ? "الحساب ده لسه محتاج تأكيد إيميل من Supabase (خاصية Confirm email شغالة). كلّم أ. " + settings.teacherName + " يوقفها من Supabase: Authentication ← Providers ← Email."
+            : "حصل خطأ في تسجيل الدخول: " + signInErr.message
+        );
+        setAuthBusy(false);
+        return;
+      }
+      userId = signInData?.user?.id;
+      activeSession = signInData?.session;
+    }
+
     if (userId) {
       // لو مفيش جلسة دخول فعلية بعد التسجيل (ده بيحصل لو خاصية "Confirm
       // email" شغالة في إعدادات Supabase Auth)، بنحاول نسجل دخول فورًا
       // بنفس الباسورد عشان نضمن إن auth.uid() يبقى موجود وقت إضافة صف
       // الطالب — وإلا الإضافة هتترفض بصمت بسبب صلاحيات RLS ومش هيظهر
       // الطالب خالص عند الأدمن حتى لو التسجيل شكله نجح قدام الطالب.
-      if (!signUpData?.session) {
-        await supabaseClient.auth.signInWithPassword({
+      if (!activeSession) {
+        const { error: fallbackSignInErr } = await supabaseClient.auth.signInWithPassword({
           email: student.email.trim(),
           password: passwordVal,
         });
+        if (fallbackSignInErr) {
+          setOtpError(
+            fallbackSignInErr.message.toLowerCase().includes("confirm")
+              ? "اتسجلت بس الحساب لسه محتاج تأكيد إيميل من Supabase (خاصية Confirm email شغالة). كلّم أ. " + settings.teacherName + " يوقفها من Supabase: Authentication ← Providers ← Email."
+              : "اتسجلت بس حصلت مشكلة في تفعيل الجلسة: " + fallbackSignInErr.message
+          );
+        }
       }
-      const { error: insertError } = await supabaseClient.from("students").insert({
+      const { error: insertError } = await supabaseClient.from("students").upsert({
         id: userId,
         name: student.name.trim(),
         phone: student.phone.trim(),
         email: student.email.trim(),
       });
-      if (insertError && insertError.code !== "23505") {
-        // 23505 = الصف موجود بالفعل (مثلاً لو حصل ضغط مزدوج على الزرار) — نتجاهله.
+      if (insertError) {
         console.error("تعذر حفظ بيانات الطالب:", insertError.message);
         setOtpError(
           "اتسجلت في نظام الدخول لكن حصلت مشكلة في حفظ بياناتك (" + insertError.message +
@@ -4115,6 +4254,7 @@ function EduPlatformDemo() {
         );
       }
       loadStudentProgress(userId);
+      logStudentLoginEvent(userId);
       setStudent((s) => ({ ...s, id: userId }));
     }
 
@@ -4153,7 +4293,14 @@ function EduPlatformDemo() {
     setAuthBusy(false);
 
     if (error) {
-      setReturningLoginError("البيانات دي مش متسجلة قبل كده، أو غلط. سجل كطالب جديد الأول.");
+      if (error.message && error.message.toLowerCase().includes("confirm")) {
+        setReturningLoginError(
+          "الحساب ده لسه محتاج تأكيد إيميل من Supabase (خاصية Confirm email شغالة). " +
+          "لازم أ. " + settings.teacherName + " يوقفها من Supabase: Authentication ← Providers ← Email ← يطفي Confirm email."
+        );
+      } else {
+        setReturningLoginError("البيانات دي مش متسجلة قبل كده، أو غلط. سجل كطالب جديد الأول.");
+      }
       return;
     }
 
@@ -4188,6 +4335,7 @@ function EduPlatformDemo() {
         setUnlockedChannelIds(enrolledRows.map((r) => r.channel_id));
       }
       loadStudentProgress(userId);
+      logStudentLoginEvent(userId);
     }
 
     if (pendingChannelId) setSelectedChannelId(pendingChannelId);
@@ -4263,6 +4411,33 @@ function EduPlatformDemo() {
     } finally {
       setStudentsLoading(false);
     }
+    loadStudentActivity();
+  }
+
+  // بيانات مراقبة الأمان: المواد اللي كل طالب داخلها، آخر دخول ليه (IP/دولة
+  // /جهاز)، وأي نشاط مشبوه (محاولات تحميل، فتح أدوات مطور، يمين ماوس على
+  // الفيديو...). كل الجداول دي عندها صلاحية قراءة كاملة للأدمن الحقيقي بس.
+  async function loadStudentActivity() {
+    const [{ data: enrollRows }, { data: loginRows }, { data: secRows }] = await Promise.all([
+      supabaseClient.from("enrollments").select("student_id, channel_id"),
+      supabaseClient.from("login_events").select("student_id, ip, country, city, user_agent, created_at").order("created_at", { ascending: false }),
+      supabaseClient.from("security_events").select("student_id, channel_id, event_type, details, created_at").order("created_at", { ascending: false }).limit(200),
+    ]);
+
+    const byStudentEnroll = {};
+    (enrollRows || []).forEach((r) => {
+      if (!byStudentEnroll[r.student_id]) byStudentEnroll[r.student_id] = [];
+      byStudentEnroll[r.student_id].push(r.channel_id);
+    });
+    setEnrollmentsByStudent(byStudentEnroll);
+
+    const lastLogin = {};
+    (loginRows || []).forEach((r) => {
+      if (!lastLogin[r.student_id]) lastLogin[r.student_id] = r; // أول ظهور = الأحدث (مرتبين تنازليًا)
+    });
+    setLastLoginByStudent(lastLogin);
+
+    setSecurityEvents(secRows || []);
   }
 
   async function addStudent() {
@@ -4770,6 +4945,45 @@ function EduPlatformDemo() {
       .select("lesson_id")
       .eq("student_id", userId);
     if (data) setCompletedLessonIds(data.map((r) => r.lesson_id));
+  }
+
+  // تسجيل كل مرة طالب يدخل بيها المنصة: الـ IP والدولة والمدينة (لو اتعرفوا)
+  // ونوع الجهاز/المتصفح — عشان الأدمن يقدر يراقب أي دخول غريب أو مشبوه.
+  // بنستخدم خدمة مجانية بترجع بيانات الزائر نفسه بس (ipapi.co)، ولو فشل
+  // الطلب لأي سبب (حجب، إنترنت بطيء...) بنتجاهله وما بنوقفش تسجيل الدخول.
+  async function logStudentLoginEvent(userId) {
+    if (!userId) return;
+    let ip = null, country = null, city = null;
+    try {
+      const res = await fetch("https://ipapi.co/json/");
+      if (res.ok) {
+        const geo = await res.json();
+        ip = geo.ip || null;
+        country = geo.country_name || null;
+        city = geo.city || null;
+      }
+    } catch (e) {
+      // مفيش إنترنت للخدمة دي أو اتحجبت — نسجل الدخول من غير بيانات الموقع
+    }
+    await supabaseClient.from("login_events").insert({
+      student_id: userId,
+      ip,
+      country,
+      city,
+      user_agent: navigator.userAgent,
+    });
+  }
+
+  // تسجيل أي نشاط مشبوه (يمين ماوس على الفيديو، محاولة تحميل، محاولة فتح
+  // أدوات المطور...) عشان الأدمن يشوفه في تبويب "سجل الأمان".
+  async function logSecurityEvent(eventType, details, channelId) {
+    if (!student.id) return;
+    await supabaseClient.from("security_events").insert({
+      student_id: student.id,
+      channel_id: channelId || null,
+      event_type: eventType,
+      details: details || null,
+    });
   }
 
   // تعديل اسم الطالب في ملفه الشخصي — بيتحفظ في جدول public.students عشان
@@ -5530,6 +5744,9 @@ function EduPlatformDemo() {
           studentsLoading={studentsLoading}
           studentsError={studentsError}
           loadAllStudents={loadAllStudents}
+          enrollmentsByStudent={enrollmentsByStudent}
+          lastLoginByStudent={lastLoginByStudent}
+          securityEvents={securityEvents}
           newStudentForm={newStudentForm}
           setNewStudentForm={setNewStudentForm}
           addStudent={addStudent}
@@ -5854,7 +6071,12 @@ function EduPlatformDemo() {
       )}
 
       {openLesson && (
-        <VideoPlayerModal lesson={openLesson} student={student} onClose={() => setOpenLesson(null)} />
+        <VideoPlayerModal
+          lesson={openLesson}
+          student={student}
+          onClose={() => setOpenLesson(null)}
+          onSecurityEvent={(type, details) => logSecurityEvent(type, details, selectedChannelId)}
+        />
       )}
 
       {showCertificate && selectedChannel && (
