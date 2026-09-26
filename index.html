@@ -3981,7 +3981,9 @@ function EduPlatformDemo() {
   }, [theme]);
 
   const [channels, setChannels] = useState(INITIAL_CHANNELS);
-  const [selectedChannelId, setSelectedChannelId] = useState(INITIAL_CHANNELS[0].id);
+  // بيبدأ فاضي (null) عشان أول ما الطالب يدخل يشوف صفحة فيها كل المواد
+  // ويختار منها هو، بدل ما يترمي جوه أول مادة (المجانية) على طول
+  const [selectedChannelId, setSelectedChannelId] = useState(null);
   const [openLesson, setOpenLesson] = useState(null);
   const [showDevices, setShowDevices] = useState(false);
   const [blockedAttempt, setBlockedAttempt] = useState(false);
@@ -5854,6 +5856,20 @@ function EduPlatformDemo() {
                   بس مش بيقدر يفتح محتوى أي ماده غير مفتوحة إلا بكود صحيح
                   (الفحص ده بيحصل في منطقة المحتوى الرئيسية). كل مادة بقى ليها
                   دروسها ونقاشها ومساعدها الذكي، منفصلين عن باقي المواد. */}
+              <div
+                className={`channel-item ${!selectedChannelId ? "active" : ""}`}
+              >
+                <div
+                  className="channel-item-main"
+                  onClick={() => { setSelectedChannelId(null); saveLastPosition(null, null); }}
+                >
+                  <div className="channel-icon">🏠</div>
+                  <div>
+                    <div className="channel-name">كل المواد</div>
+                    <div className="channel-count">الصفحة الرئيسية</div>
+                  </div>
+                </div>
+              </div>
               {channels.map((c) => {
                 const isLocked = !c.free && !unlockedChannelIds.includes(c.id);
                 return (
@@ -5916,7 +5932,7 @@ function EduPlatformDemo() {
             )}
 
             <div className="topbar">
-              <div className="topbar-title">{selectedChannel ? selectedChannel.name : "اختر قناة"}</div>
+              <div className="topbar-title">{selectedChannel ? selectedChannel.name : "كل المواد"}</div>
               {role === "student" && (
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div className="notif-bell-wrap">
@@ -6124,7 +6140,42 @@ function EduPlatformDemo() {
                     ))}
                 </React.Fragment>
               ) : (
-                <div className="empty-state">اختار مادة الأول من القائمة.</div>
+                <div className="courses-section" style={{ padding: 0 }}>
+                  <h2 style={{ marginTop: 0 }}>كل المواد</h2>
+                  <div className="courses-sub">اختار المادة اللي انت مسجل فيها عشان تدخل دروسها، أو أي مادة تانية عشان تشوف تفاصيلها وتفتحها بكود.</div>
+                  <div className="course-grid" style={{ marginTop: 18 }}>
+                    {channels.map((c) => {
+                      const { title, code } = splitCourseName(c.name);
+                      const isUnlocked = c.free || unlockedChannelIds.includes(c.id);
+                      return (
+                        <div
+                          key={c.id}
+                          className="course-card-2"
+                          onClick={() => { setSelectedChannelId(c.id); setChannelTab("lessons"); saveLastPosition(c.id, null); }}
+                        >
+                          <div className="course-thumb-2">
+                            <span className="course-badge">{c.free ? "مجاني" : isUnlocked ? "مسجّل" : "🔒 محتاجة كود"}</span>
+                            <span style={{ fontSize: 26 }}>{isUnlocked ? "📖" : "🔒"}</span>
+                          </div>
+                          <div className="course-body-2">
+                            <div className="course-name-2">
+                              {title}
+                              {code && <span className="course-name-code">{code}</span>}
+                            </div>
+                            <div className="course-teacher-2">
+                              <span>🎓</span>
+                              {settings.teacherName}
+                            </div>
+                            <div className="course-stats-row">
+                              <span className="course-lessons-chip">{c.lessons.length} فيديو</span>
+                              {c.free && <span className="free-chip">مجانًا</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
             </div>
           </div>
