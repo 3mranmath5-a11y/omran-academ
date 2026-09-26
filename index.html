@@ -2413,7 +2413,7 @@ function SiteSidebar({ stage, setStage, brandShort }) {
   const items = [
     { key: "landing", label: "الصفحة الرئيسية", icon: "🏠", onClick: () => setStage("landing") },
     { key: "profile", label: "الملف الشخصي", icon: "👤", onClick: () => setStage("profile") },
-    { key: "my-courses", label: "دوراتي", icon: "📁", onClick: soon },
+    { key: "my-courses", label: "دوراتي", icon: "📁", onClick: () => setStage("my-courses") },
     { key: "courses", label: "الدورات التعليمية", icon: "▶️", onClick: () => setStage("courses") },
     { key: "notes", label: "المذكرات", icon: "📚", onClick: () => setStage("notes") },
     { key: "bank", label: "Test Bank", icon: "📦", onClick: () => setStage("bank") },
@@ -4919,7 +4919,7 @@ function EduPlatformDemo() {
 
   return (
     <div dir="rtl" className="app-root" style={{ zoom: theme.uiScale }}>
-      {(stage === "landing" || stage === "courses" || stage === "profile" || stage === "notes" || stage === "bank" || stage === "about") && (
+      {(stage === "landing" || stage === "courses" || stage === "my-courses" || stage === "profile" || stage === "notes" || stage === "bank" || stage === "about") && (
         <div className="site-shell">
           <SiteSidebar stage={stage} setStage={setStage} brandShort={settings.brandShort} />
 
@@ -5069,6 +5069,74 @@ function EduPlatformDemo() {
                     </div>
                   </div>
                   <div className="footer-bottom">© {new Date().getFullYear()} {settings.brandShort}. جميع الحقوق محفوظة.</div>
+                </div>
+              </div>
+            )}
+
+            {stage === "my-courses" && (
+              <div>
+                <div className="courses-section" id="my-courses-section">
+                  <h2>دوراتي</h2>
+                  {!student.id ? (
+                    <React.Fragment>
+                      <div className="courses-sub">سجّل دخولك الأول عشان تقدر تشوف الدورات اللي انت مسجل فيها.</div>
+                      <button className="primary-btn" style={{ marginTop: 16, width: "auto", padding: "10px 28px" }} onClick={() => setStage("login")}>
+                        تسجيل الدخول
+                      </button>
+                    </React.Fragment>
+                  ) : (
+                    <React.Fragment>
+                      <div className="courses-sub">دي المواد اللي انت مسجل فيها دلوقتي مع {settings.teacherName} — ادخل عليها مباشرة من هنا.</div>
+                      {(() => {
+                        const myChannels = channels.filter((c) => c.free || unlockedChannelIds.includes(c.id));
+                        if (myChannels.length === 0) {
+                          return (
+                            <div className="empty-state" style={{ marginTop: 18 }}>
+                              لسه مش مسجل في أي مادة مدفوعة. افتح "الدورات التعليمية" واختار المادة اللي محتاجها وادخل كودها.
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="course-grid" style={{ marginTop: 18 }}>
+                            {myChannels.map((c) => {
+                              const { title, code } = splitCourseName(c.name);
+                              return (
+                                <div
+                                  key={c.id}
+                                  className="course-card-2"
+                                  onClick={() => {
+                                    setSelectedChannelId(c.id);
+                                    setChannelTab("lessons");
+                                    setStage("app");
+                                  }}
+                                >
+                                  <div className="course-thumb-2">
+                                    <span className="course-badge">{c.free ? "مجاني" : "مسجّل"}</span>
+                                    <span style={{ fontSize: 26 }}>📖</span>
+                                  </div>
+                                  <div className="course-body-2">
+                                    <div className="course-name-2">
+                                      {title}
+                                      {code && <span className="course-name-code">{code}</span>}
+                                    </div>
+                                    <div className="course-teacher-2">
+                                      <span>🎓</span>
+                                      {settings.teacherName}
+                                    </div>
+                                    <div className="course-stats-row">
+                                      <span className="course-lessons-chip">{c.lessons.length} فيديو</span>
+                                      {c.free && <span className="free-chip">مجانًا</span>}
+                                    </div>
+                                    <button className="course-details-btn">ادخل للمادة</button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </React.Fragment>
+                  )}
                 </div>
               </div>
             )}
