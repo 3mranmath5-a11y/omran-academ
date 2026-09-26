@@ -5038,25 +5038,30 @@ function EduPlatformDemo() {
     } catch (e) {
       // مفيش إنترنت للخدمة دي أو اتحجبت — نسجل الدخول من غير بيانات الموقع
     }
-    await supabaseClient.from("login_events").insert({
+    const { error: loginLogError } = await supabaseClient.from("login_events").insert({
       student_id: userId,
       ip,
       country,
       city,
       user_agent: navigator.userAgent,
     });
+    // لو فشل التسجيل ده (مثلاً لأن كود SQL بتاع 17_security_monitoring.sql
+    // لسه ما اتشغلش)، لازم يظهر في الـ Console عشان منفتكرش إن كل حاجة
+    // شغالة والمشكلة تفضل مخفية بصمت.
+    if (loginLogError) console.error("تعذر تسجيل بيانات الدخول (login_events):", loginLogError.message);
   }
 
   // تسجيل أي نشاط مشبوه (يمين ماوس على الفيديو، محاولة تحميل، محاولة فتح
   // أدوات المطور...) عشان الأدمن يشوفه في تبويب "سجل الأمان".
   async function logSecurityEvent(eventType, details, channelId) {
     if (!student.id) return;
-    await supabaseClient.from("security_events").insert({
+    const { error: secLogError } = await supabaseClient.from("security_events").insert({
       student_id: student.id,
       channel_id: channelId || null,
       event_type: eventType,
       details: details || null,
     });
+    if (secLogError) console.error("تعذر تسجيل حدث أمني (security_events):", secLogError.message);
   }
 
   // تعديل اسم الطالب في ملفه الشخصي — بيتحفظ في جدول public.students عشان
