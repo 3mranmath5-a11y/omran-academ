@@ -3850,6 +3850,28 @@ function EduPlatformDemo() {
   const [studentMode, setStudentMode] = useState("new"); // new | returning
   const [returningLogin, setReturningLogin] = useState({ name: "", phone: "", email: "" });
   const [returningLoginError, setReturningLoginError] = useState("");
+
+  // حفظ بيانات آخر تسجيل دخول ناجح على نفس الجهاز/المتصفح، عشان لو الطالب
+  // رجع تاني يلاقي بياناته متملية له تلقائيًا في "عندي حساب من قبل" بدل ما
+  // يكتبها من الأول في كل مرة
+  function saveLoginInfo(info) {
+    try {
+      localStorage.setItem("omran_saved_login", JSON.stringify(info));
+    } catch (e) {}
+  }
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("omran_saved_login");
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved?.email) {
+          setReturningLogin({ name: saved.name || "", phone: saved.phone || "", email: saved.email || "" });
+          setStudentMode("returning");
+        }
+      }
+    } catch (e) {}
+  }, []);
+
   const [authBusy, setAuthBusy] = useState(false);
   const [adminLoginEmail, setAdminLoginEmail] = useState("");
   const [adminLoginPassword, setAdminLoginPassword] = useState("");
@@ -4147,6 +4169,7 @@ function EduPlatformDemo() {
           .maybeSingle();
         if (row) {
           setStudent({ id: session.user.id, name: row.name, phone: row.phone, email: row.email, username: "" });
+          saveLoginInfo({ name: row.name || "", phone: row.phone || "", email: row.email || "" });
           setStage("app");
         } else {
           // مش طالب — نتأكد هل الجلسة دي لأدمن حقيقي مسجل في جدول admins
@@ -4319,6 +4342,7 @@ function EduPlatformDemo() {
         },
       ];
     });
+    saveLoginInfo({ name: student.name.trim(), phone: student.phone.trim(), email: student.email.trim() });
     setAuthBusy(false);
     setStage("app");
   }
@@ -4382,6 +4406,11 @@ function EduPlatformDemo() {
       logStudentLoginEvent(userId);
     }
 
+    saveLoginInfo({
+      name: returningLogin.name.trim(),
+      phone: returningLogin.phone.trim(),
+      email: returningLogin.email.trim(),
+    });
     if (pendingChannelId) setSelectedChannelId(pendingChannelId);
     setStage("app");
   }
