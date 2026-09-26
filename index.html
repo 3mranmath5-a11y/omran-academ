@@ -2524,6 +2524,46 @@ function ChannelPriceFieldInput({ value, placeholder, onSave }) {
   );
 }
 
+// حقل الاسم في الملف الشخصي بتاع الطالب — بيدي تأكيد حفظ فعلي زي حقل السعر
+function StudentProfileNameField({ value, onSave }) {
+  const [text, setText] = useState(value || "");
+  const [status, setStatus] = useState("idle");
+  useEffect(() => {
+    setText(value || "");
+  }, [value]);
+
+  async function commit() {
+    const trimmed = text.trim();
+    if (!trimmed || trimmed === (value || "")) return;
+    setStatus("saving");
+    const result = await onSave(trimmed);
+    if (result && result.ok === false) {
+      setStatus("error");
+      setTimeout(() => setStatus("idle"), 3000);
+    } else {
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <input
+        className="field-input"
+        style={{ maxWidth: 260 }}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } }}
+      />
+      <button type="button" className="small-add-btn" onClick={commit}>💾 حفظ</button>
+      {status === "saving" && <span style={{ color: "var(--text-muted)", fontSize: 13 }}>...بيتحفظ</span>}
+      {status === "saved" && <span style={{ color: "#3CB371", fontSize: 13 }}>✔ اتحفظ</span>}
+      {status === "error" && <span style={{ color: "#e05555", fontSize: 13 }}>✗ فشل الحفظ</span>}
+    </div>
+  );
+}
+
 function Watermark({ text }) {
   const [pos, setPos] = useState({ top: "20%", left: "15%" });
   useEffect(() => {
@@ -4035,9 +4075,10 @@ function EduPlatformDemo() {
     setAuthBusy(true);
 
     // تسجيل حقيقي في Supabase (بدل التخزين المؤقت في الذاكرة)
+    const passwordVal = passwordFromPhone(student.phone);
     const { data: signUpData, error: signUpError } = await supabaseClient.auth.signUp({
       email: student.email.trim(),
-      password: passwordFromPhone(student.phone),
+      password: passwordVal,
     });
 
     if (signUpError && !signUpError.message.includes("already registered")) {
@@ -4048,12 +4089,31 @@ function EduPlatformDemo() {
 
     const userId = signUpData?.user?.id;
     if (userId) {
-      await supabaseClient.from("students").insert({
+      // لو مفيش جلسة دخول فعلية بعد التسجيل (ده بيحصل لو خاصية "Confirm
+      // email" شغالة في إعدادات Supabase Auth)، بنحاول نسجل دخول فورًا
+      // بنفس الباسورد عشان نضمن إن auth.uid() يبقى موجود وقت إضافة صف
+      // الطالب — وإلا الإضافة هتترفض بصمت بسبب صلاحيات RLS ومش هيظهر
+      // الطالب خالص عند الأدمن حتى لو التسجيل شكله نجح قدام الطالب.
+      if (!signUpData?.session) {
+        await supabaseClient.auth.signInWithPassword({
+          email: student.email.trim(),
+          password: passwordVal,
+        });
+      }
+      const { error: insertError } = await supabaseClient.from("students").insert({
         id: userId,
         name: student.name.trim(),
         phone: student.phone.trim(),
         email: student.email.trim(),
       });
+      if (insertError && insertError.code !== "23505") {
+        // 23505 = الصف موجود بالفعل (مثلاً لو حصل ضغط مزدوج على الزرار) — نتجاهله.
+        console.error("تعذر حفظ بيانات الطالب:", insertError.message);
+        setOtpError(
+          "اتسجلت في نظام الدخول لكن حصلت مشكلة في حفظ بياناتك (" + insertError.message +
+          ")، كلّم أ. " + settings.teacherName + " عشان يتأكد من إعدادات Supabase."
+        );
+      }
       loadStudentProgress(userId);
       setStudent((s) => ({ ...s, id: userId }));
     }
@@ -4109,6 +4169,17 @@ function EduPlatformDemo() {
     // كانت كل المواد بتظهر "محتاجة كود" حتى لو الطالب سبق وفتحها.
     const userId = data?.user?.id;
     if (userId) {
+      // "علاج ذاتي": لو الطالب ده كان سجل قبل ما نصلّح مشكلة حفظ بيانات
+      // التسجيل (وبالتالي صفه في جدول students ضاع)، بنعيد إنشاءه هنا تاني
+      // كل مرة يدخل، عشان يفضل ظاهر عند الأدمن من غير أي تدخل يدوي في القاعدة.
+      const { error: upsertError } = await supabaseClient.from("students").upsert({
+        id: userId,
+        name: returningLogin.name.trim(),
+        phone: returningLogin.phone.trim(),
+        email: returningLogin.email.trim(),
+      });
+      if (upsertError) console.error("تعذر تحديث بيانات الطالب:", upsertError.message);
+
       const { data: enrolledRows } = await supabaseClient
         .from("enrollments")
         .select("channel_id")
@@ -4701,6 +4772,17 @@ function EduPlatformDemo() {
     if (data) setCompletedLessonIds(data.map((r) => r.lesson_id));
   }
 
+  // تعديل اسم الطالب في ملفه الشخصي — بيتحفظ في جدول public.students عشان
+  // يفضل ظاهر بنفس الاسم في أي جهاز تاني يسجل بيه دخول بعد كده.
+  async function updateStudentName(name) {
+    const trimmed = name.trim();
+    if (!trimmed || !student.id) return { ok: false, error: "الاسم مطلوب" };
+    const { error } = await supabaseClient.from("students").update({ name: trimmed }).eq("id", student.id);
+    if (error) return { ok: false, error: error.message };
+    setStudent((s) => ({ ...s, name: trimmed }));
+    return { ok: true };
+  }
+
   async function toggleLessonComplete(lesson) {
     const { data: { user } } = await supabaseClient.auth.getUser();
     if (!user) {
@@ -5145,8 +5227,32 @@ function EduPlatformDemo() {
               <div className="static-page">
                 <div className="static-page-icon">👤</div>
                 <h2>الملف الشخصي</h2>
-                <div className="static-page-name">{settings.teacherName}</div>
-                <p className="static-page-text">{settings.teacherBio}</p>
+                {!student.id ? (
+                  <React.Fragment>
+                    <p className="static-page-text">سجّل دخولك الأول عشان تقدر تشوف وتعدّل بياناتك.</p>
+                    <button className="primary-btn" style={{ marginTop: 12, width: "auto", padding: "10px 28px" }} onClick={() => setStage("login")}>
+                      تسجيل الدخول
+                    </button>
+                  </React.Fragment>
+                ) : (
+                  <div style={{ maxWidth: 420, marginTop: 10 }}>
+                    <div style={{ marginBottom: 18 }}>
+                      <label className="field-label">الاسم</label>
+                      <StudentProfileNameField value={student.name} onSave={updateStudentName} />
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      <label className="field-label">رقم الهاتف</label>
+                      <div className="static-page-text" style={{ margin: 0 }}>{student.phone || "—"}</div>
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      <label className="field-label">البريد الإلكتروني</label>
+                      <div className="static-page-text" style={{ margin: 0 }}>{student.email || "—"}</div>
+                    </div>
+                    <p className="static-page-text" style={{ fontSize: 13, opacity: 0.75, marginTop: 18 }}>
+                      رقم الهاتف والبريد الإلكتروني مرتبطين بحساب الدخول بتاعك، فلو محتاج تغيّرهم كلّم {settings.teacherName}.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
