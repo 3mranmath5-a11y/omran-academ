@@ -4006,6 +4006,8 @@ function EduPlatformDemo() {
   const [addingChildTo, setAddingChildTo] = useState(null); // { parentId } أو null لقسم رئيسي جديد
   const [newCategoryName, setNewCategoryName] = useState("");
   const [unlockedChannelIds, setUnlockedChannelIds] = useState([]);
+  const [contentLoaded, setContentLoaded] = useState(false);
+  const [positionRestored, setPositionRestored] = useState(false);
   const [codeInput, setCodeInput] = useState("");
   const [codeError, setCodeError] = useState("");
   const [otpCode, setOtpCode] = useState("");
@@ -4113,8 +4115,48 @@ function EduPlatformDemo() {
         (n) => !lastSeen || new Date(n.created_at) > new Date(lastSeen)
       ).length;
       setUnreadNotifCount(unread);
+      setContentLoaded(true);
     })();
   }, []);
+
+  // حفظ آخر مادة (وآخر فيديو كان شغال) عشان لو الطالب عمل Refresh يرجع
+  // لنفس المكان بدل ما يترمي على القناة المجانية من الأول
+  function saveLastPosition(channelId, lessonId) {
+    try {
+      if (!student.id) return;
+      localStorage.setItem(
+        `omran_last_pos_${student.id}`,
+        JSON.stringify({ channelId, lessonId: lessonId || null })
+      );
+    } catch (e) {}
+  }
+
+  // استرجاع آخر مادة وآخر فيديو كان الطالب فاتحهم، بعد ما تتأكد الجلسة
+  // (مين الطالب ده) وبعد ما تتحمل كل المواد والدروس من قاعدة البيانات،
+  // وبعد ما نعرف كمان المواد المفتوحة له (unlockedChannelIds) عشان منرجّعوش
+  // لمادة مدفوعة ملغاة أو مش بتاعته
+  useEffect(() => {
+    if (!sessionChecked || !contentLoaded || positionRestored) return;
+    if (!student.id) {
+      setPositionRestored(true);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(`omran_last_pos_${student.id}`);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        const ch = channels.find((c) => c.id === saved.channelId);
+        if (ch && (ch.free || unlockedChannelIds.includes(ch.id))) {
+          setSelectedChannelId(ch.id);
+          if (saved.lessonId) {
+            const lesson = (ch.lessons || []).find((l) => l.id === saved.lessonId);
+            if (lesson) setOpenLesson(lesson);
+          }
+        }
+      }
+    } catch (e) {}
+    setPositionRestored(true);
+  }, [sessionChecked, contentLoaded, student.id, channels, unlockedChannelIds, positionRestored]);
 
   // استرجاع جلسة الطالب تلقائيًا لو كان مسجل دخول قبل كده (بدل ما يضطر
   // يسجل من جديد كل مرة يعمل Refresh)
@@ -5404,6 +5446,7 @@ function EduPlatformDemo() {
                                     setSelectedChannelId(c.id);
                                     setChannelTab("lessons");
                                     setStage("app");
+                                    saveLastPosition(c.id, null);
                                   }}
                                 >
                                   <div className="course-thumb-2">
@@ -5802,7 +5845,7 @@ function EduPlatformDemo() {
                   >
                     <div
                       className="channel-item-main"
-                      onClick={() => { setSelectedChannelId(c.id); setChannelTab("lessons"); }}
+                      onClick={() => { setSelectedChannelId(c.id); setChannelTab("lessons"); saveLastPosition(c.id, null); }}
                     >
                       <div className="channel-icon">{isLocked ? "🔒" : "#"}</div>
                       <div>
@@ -6028,7 +6071,7 @@ function EduPlatformDemo() {
                             return (
                               <div className={`lesson-bubble ${done ? "lesson-done" : ""}`} key={l.id}>
                                 <div className="lesson-left">
-                                  <button className="lesson-play" onClick={() => setOpenLesson(l)} aria-label="تشغيل">▶</button>
+                                  <button className="lesson-play" onClick={() => { setOpenLesson(l); saveLastPosition(selectedChannelId, l.id); }} aria-label="تشغيل">▶</button>
                                   <div>
                                     <div className="lesson-title">{l.title}</div>
                                     <div className="lesson-duration">{l.duration}</div>
@@ -6074,7 +6117,7 @@ function EduPlatformDemo() {
         <VideoPlayerModal
           lesson={openLesson}
           student={student}
-          onClose={() => setOpenLesson(null)}
+          onClose={() => { setOpenLesson(null); saveLastPosition(selectedChannelId, null); }}
           onSecurityEvent={(type, details) => logSecurityEvent(type, details, selectedChannelId)}
         />
       )}
