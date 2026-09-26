@@ -3800,33 +3800,50 @@ function EduPlatformDemo() {
         { data: materialRows },
         { data: notifRows },
         { data: discussionRows },
+        { data: channelRows },
       ] = await Promise.all([
         supabaseClient.from("lessons").select("*").order("sort_order", { ascending: true }),
         supabaseClient.from("categories").select("*").order("sort_order", { ascending: true }),
         supabaseClient.from("materials").select("*").order("created_at", { ascending: true }),
         supabaseClient.from("notifications").select("*").order("created_at", { ascending: false }).limit(30),
         supabaseClient.from("discussions").select("*").order("created_at", { ascending: false }).limit(200),
+        supabaseClient.from("channels").select("*"),
       ]);
       if (lessonsErr || catErr || !lessonRows || !categoryRows) return;
       setChannels((cs) =>
-        cs.map((c) => ({
-          ...c,
-          categories: categoryRows.filter((cat) => cat.channel_id === c.id),
-          lessons: lessonRows
-            .filter((l) => l.channel_id === c.id)
-            .map((l) => ({
-              id: l.id,
-              title: l.title,
-              duration: l.duration || "--:--",
-              category_id: l.category_id,
-              videoUrl: l.video_url,
-              isEmbed: l.is_embed,
-              sort_order: l.sort_order || 0,
-            })),
-          materials: (materialRows || [])
-            .filter((m) => m.channel_id === c.id)
-            .map((m) => ({ id: m.id, name: m.name, category: m.category, url: m.url, path: m.path })),
-        }))
+        cs.map((c) => {
+          // بيانات المادة (الاسم/السعر/السعر قبل الخصم/مجانية) بقت محفوظة
+          // في جدول public.channels، فبنجيبها من هناك بدل القيمة الثابتة في
+          // الكود، عشان أي تعديل من الأدمن يفضل ظاهر بعد أي Refresh أو من
+          // أي جهاز تاني.
+          const dbRow = (channelRows || []).find((r) => r.id === c.id);
+          return {
+            ...c,
+            ...(dbRow
+              ? {
+                  name: dbRow.name || c.name,
+                  price: dbRow.price || "",
+                  originalPrice: dbRow.original_price || "",
+                  free: !!dbRow.free,
+                }
+              : {}),
+            categories: categoryRows.filter((cat) => cat.channel_id === c.id),
+            lessons: lessonRows
+              .filter((l) => l.channel_id === c.id)
+              .map((l) => ({
+                id: l.id,
+                title: l.title,
+                duration: l.duration || "--:--",
+                category_id: l.category_id,
+                videoUrl: l.video_url,
+                isEmbed: l.is_embed,
+                sort_order: l.sort_order || 0,
+              })),
+            materials: (materialRows || [])
+              .filter((m) => m.channel_id === c.id)
+              .map((m) => ({ id: m.id, name: m.name, category: m.category, url: m.url, path: m.path })),
+          };
+        })
       );
       setTestBankFiles(
         (materialRows || [])
@@ -4127,31 +4144,55 @@ function EduPlatformDemo() {
     setDevices((d) => d.filter((x) => x.id !== id));
   }
 
+  // كل تعديل في اسم/سعر/مجانية المادة بيتبعت فورًا لجدول public.channels في
+  // قاعدة البيانات، عشان يفضل محفوظ دايمًا ويظهر بنفس الشكل على أي جهاز أو
+  // متصفح تاني (مش مجرد تعديل مؤقت في ذاكرة المتصفح بيتمسح مع أي Refresh).
+  function saveChannelToDb(channelId, fields) {
+    supabaseClient
+      .from("channels")
+      .update(fields)
+      .eq("id", channelId)
+      .then(({ error }) => {
+        if (error) console.error("تعذر حفظ بيانات المادة:", error.message);
+      });
+  }
+
   function addChannel() {
     if (!newChannelName.trim()) return;
     const id = `c${Date.now()}`;
-    setChannels((c) => [...c, { id, name: newChannelName.trim(), price: "", originalPrice: "", free: false, lessons: [] }]);
+    const name = newChannelName.trim();
+    setChannels((c) => [...c, { id, name, price: "", originalPrice: "", free: false, lessons: [] }]);
     setNewChannelName("");
     setSelectedChannelId(id);
+    supabaseClient
+      .from("channels")
+      .insert({ id, name, price: null, original_price: null, free: false })
+      .then(({ error }) => {
+        if (error) console.error("تعذر حفظ المادة الجديدة:", error.message);
+      });
   }
 
   function updateChannelName(channelId, name) {
     setChannels((cs) => cs.map((c) => (c.id === channelId ? { ...c, name } : c)));
+    saveChannelToDb(channelId, { name });
   }
 
   function updateChannelPrice(channelId, price) {
     setChannels((cs) => cs.map((c) => (c.id === channelId ? { ...c, price } : c)));
+    saveChannelToDb(channelId, { price: price || null });
   }
 
   // سعر "قبل الخصم" — لو اتحط، بيظهر مشطوب جنب السعر الحالي (سعر بعد الخصم)
   function updateChannelOriginalPrice(channelId, originalPrice) {
     setChannels((cs) => cs.map((c) => (c.id === channelId ? { ...c, originalPrice } : c)));
+    saveChannelToDb(channelId, { original_price: originalPrice || null });
   }
 
   // فتح/قفل المادة كمجانية بالكامل — لو اتفعّلت، الطلاب يقدروا يدخلوا الدروس
   // من غير كود وصول ومن غير ما يظهر أي سعر
   function updateChannelFree(channelId, free) {
     setChannels((cs) => cs.map((c) => (c.id === channelId ? { ...c, free } : c)));
+    saveChannelToDb(channelId, { free });
   }
 
   function extractEmbedUrl(input) {
@@ -4670,6 +4711,13 @@ function EduPlatformDemo() {
       }
       return remaining;
     });
+    supabaseClient
+      .from("channels")
+      .delete()
+      .eq("id", channelId)
+      .then(({ error }) => {
+        if (error) console.error("تعذر حذف المادة من القاعدة:", error.message);
+      });
   }
 
   async function generateCode(channelId) {
