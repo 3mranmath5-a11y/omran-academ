@@ -1639,6 +1639,38 @@
     gap: 18px;
     align-items: start;
   }
+  .dash-body-single { display: block; }
+  .dash-detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .dash-detail-grid { grid-template-columns: 1fr; }
+  }
+  .dash-course-grid {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .dash-course-card {
+    position: relative;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    cursor: pointer;
+    transition: border-color .15s;
+  }
+  .dash-course-card:hover { border-color: rgba(242,179,61,0.5); }
+  .dash-course-card-name { font-size: 16px; font-weight: 700; padding-left: 26px; }
+  .dash-course-card .channel-delete-btn {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+  }
   .dash-panel {
     background: var(--surface);
     border: 1px solid var(--line);
@@ -2447,6 +2479,51 @@ function LessonDurationInput({ lesson, onSave }) {
   );
 }
 
+// إدخال سعر المادة (أو السعر قبل الخصم): بيحتفظ بقيمة محلية وقت الكتابة،
+// وفيه زرار "حفظ" واضح بدل الاعتماد بس على onBlur. لما يتحفظ، بينتظر
+// تأكيد فعلي إن قاعدة البيانات قبلت التعديل قبل ما يظهر "✔ اتحفظ" — عشان
+// الأدمن يبقى متأكد إن السعر فعلاً محفوظ مش مجرد شكل في الشاشة.
+function ChannelPriceFieldInput({ value, placeholder, onSave }) {
+  const [text, setText] = useState(value || "");
+  const [status, setStatus] = useState("idle"); // idle | saving | saved | error
+  useEffect(() => {
+    setText(value || "");
+  }, [value]);
+
+  async function commit() {
+    const trimmed = text.trim();
+    if (trimmed === (value || "")) return;
+    setStatus("saving");
+    const result = await onSave(trimmed);
+    if (result && result.ok === false) {
+      setStatus("error");
+      setTimeout(() => setStatus("idle"), 3000);
+    } else {
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+      <input
+        className="dash-course-price-input"
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+        }}
+      />
+      <button type="button" className="icon-btn" title="حفظ" onClick={commit}>💾</button>
+      {status === "saving" && <span style={{ color: "var(--text-muted)", fontSize: 12, whiteSpace: "nowrap" }}>...بيتحفظ</span>}
+      {status === "saved" && <span style={{ color: "#3CB371", fontSize: 12, whiteSpace: "nowrap" }}>✔ اتحفظ</span>}
+      {status === "error" && <span style={{ color: "#e05555", fontSize: 12, whiteSpace: "nowrap" }}>✗ فشل الحفظ</span>}
+    </div>
+  );
+}
+
 function Watermark({ text }) {
   const [pos, setPos] = useState({ top: "20%", left: "15%" });
   useEffect(() => {
@@ -2724,6 +2801,8 @@ function AdminDashboard({
   deleteChannel,
   updateChannelName,
   updateChannelPrice,
+  updateChannelOriginalPrice,
+  updateChannelFree,
   newLesson,
   setNewLesson,
   addLesson,
@@ -2775,6 +2854,15 @@ function AdminDashboard({
 }) {
   const totalLessons = channels.reduce((sum, c) => sum + c.lessons.length, 0);
   const [adminSection, setAdminSection] = useState("content");
+  // بيتحكم في تبويب "المواد والدروس والأكواد": false يعني عرض قائمة كل
+  // المواد، true يعني فتح مادة معينة وعرض تفاصيلها (دروسها وأكوادها)
+  // لوحدها، بدل ما تكون كل المواد ودروس مادة واحدة وأكوادها ظاهرين مع بعض
+  // في نفس الوقت جنب بعض.
+  const [viewingChannelDetail, setViewingChannelDetail] = useState(false);
+  function openChannelDetail(channelId) {
+    setSelectedChannelId(channelId);
+    setViewingChannelDetail(true);
+  }
   const ADMIN_NAV_ITEMS = [
     { key: "content", icon: "📚", label: "المواد والدروس والأكواد" },
     { key: "testbank", icon: "📦", label: "بنك الأسئلة" },
@@ -2824,7 +2912,8 @@ function AdminDashboard({
         </nav>
         <div className="dash-content">
           {adminSection === "content" && (
-      <div className="dash-body">
+      <div className="dash-body-single">
+        {!viewingChannelDetail && (
         <div className="dash-panel">
           <h3>المواد</h3>
           <div className="inline-form">
@@ -2835,55 +2924,17 @@ function AdminDashboard({
             />
             <button className="small-add-btn" onClick={addChannel}>+ إضافة</button>
           </div>
-          <div className="dash-course-list">
+          <div className="dash-course-grid">
             {channels.map((c) => (
               <div
                 key={c.id}
-                className={`dash-course-item ${c.id === selectedChannelId ? "active" : ""}`}
-                onClick={() => setSelectedChannelId(c.id)}
+                className="dash-course-card"
+                onClick={() => openChannelDetail(c.id)}
               >
-                <div style={{ flex: 1 }}>
-                  <input
-                    className="dash-course-name-input"
-                    value={c.name}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => updateChannelName(c.id, e.target.value)}
-                  />
-                  <div className="dash-course-count">
-                    {c.lessons.length} فيديو · {(c.codes || []).filter((cc) => cc.used).length} طالب
-                  </div>
-                  <div className="dash-course-price-row" onClick={(e) => e.stopPropagation()}>
-                    <label className="free-toggle-label">
-                      <input
-                        type="checkbox"
-                        checked={!!c.free}
-                        onChange={(e) => updateChannelFree(c.id, e.target.checked)}
-                      />
-                      <span>🆓 مجانية بالكامل</span>
-                    </label>
-                  </div>
-                  {!c.free && (
-                    <React.Fragment>
-                      <div className="dash-course-price-row" onClick={(e) => e.stopPropagation()}>
-                        <span>السعر:</span>
-                        <input
-                          className="dash-course-price-input"
-                          value={c.price || ""}
-                          placeholder="مثال: 150 ريال"
-                          onChange={(e) => updateChannelPrice(c.id, e.target.value)}
-                        />
-                      </div>
-                      <div className="dash-course-price-row" onClick={(e) => e.stopPropagation()}>
-                        <span>السعر قبل الخصم (اختياري):</span>
-                        <input
-                          className="dash-course-price-input"
-                          value={c.originalPrice || ""}
-                          placeholder="مثال: 200 ريال"
-                          onChange={(e) => updateChannelOriginalPrice(c.id, e.target.value)}
-                        />
-                      </div>
-                    </React.Fragment>
-                  )}
+                <div className="dash-course-card-name">{c.name}</div>
+                <div className="dash-course-count">
+                  {c.lessons.length} فيديو
+                  {c.free ? " · مجانًا" : c.price ? ` · ${c.price}` : ""}
                 </div>
                 <button
                   className="channel-delete-btn"
@@ -2894,10 +2945,66 @@ function AdminDashboard({
             ))}
           </div>
         </div>
+        )}
 
+        {viewingChannelDetail && selectedChannel && (
+        <React.Fragment>
+          <button
+            type="button"
+            className="ghost-link"
+            style={{ marginBottom: 16 }}
+            onClick={() => setViewingChannelDetail(false)}
+          >→ كل المواد</button>
+
+          <div className="dash-panel" style={{ marginBottom: 18 }}>
+            <h3>بيانات مادة «{selectedChannel.name}»</h3>
+            <input
+              className="dash-course-name-input"
+              style={{ fontSize: 18, marginBottom: 10 }}
+              value={selectedChannel.name}
+              onChange={(e) => updateChannelName(selectedChannel.id, e.target.value)}
+            />
+            <div className="dash-course-price-row">
+              <label className="free-toggle-label">
+                <input
+                  type="checkbox"
+                  checked={!!selectedChannel.free}
+                  onChange={(e) => updateChannelFree(selectedChannel.id, e.target.checked)}
+                />
+                <span>🆓 مجانية بالكامل</span>
+              </label>
+            </div>
+            {!selectedChannel.free && (
+              <React.Fragment>
+                <div className="dash-course-price-row">
+                  <span>السعر:</span>
+                  <ChannelPriceFieldInput
+                    value={selectedChannel.price}
+                    placeholder="مثال: 150 ريال"
+                    onSave={(val) => updateChannelPrice(selectedChannel.id, val)}
+                  />
+                </div>
+                <div className="dash-course-price-row">
+                  <span>السعر قبل الخصم (اختياري):</span>
+                  <ChannelPriceFieldInput
+                    value={selectedChannel.originalPrice}
+                    placeholder="مثال: 200 ريال"
+                    onSave={(val) => updateChannelOriginalPrice(selectedChannel.id, val)}
+                  />
+                </div>
+              </React.Fragment>
+            )}
+            <button
+              type="button"
+              className="channel-delete-btn"
+              style={{ marginTop: 12 }}
+              onClick={() => { deleteChannel(selectedChannel.id); setViewingChannelDetail(false); }}
+            >🗑 حذف المادة دي</button>
+          </div>
+
+          <div className="dash-detail-grid">
         <div className="dash-panel">
-          <h3>دروس «{selectedChannel ? selectedChannel.name : "—"}»</h3>
-          {selectedChannel ? (
+          <h3>دروس «{selectedChannel.name}»</h3>
             <React.Fragment>
               <div
                 style={{
@@ -3070,14 +3177,10 @@ function AdminDashboard({
                   ))}
               </div>
             </React.Fragment>
-          ) : (
-            <div className="empty-state">اختار مادة الأول من القائمة.</div>
-          )}
         </div>
 
         <div className="dash-panel">
-          <h3>أكواد الوصول لـ «{selectedChannel ? selectedChannel.name : "—"}»</h3>
-          {selectedChannel ? (
+          <h3>أكواد الوصول لـ «{selectedChannel.name}»</h3>
             <React.Fragment>
               <button
                 className="small-add-btn"
@@ -3103,10 +3206,10 @@ function AdminDashboard({
                 ))}
               </div>
             </React.Fragment>
-          ) : (
-            <div className="empty-state">اختار مادة الأول من القائمة.</div>
-          )}
         </div>
+          </div>
+        </React.Fragment>
+        )}
       </div>
           )}
 
@@ -4147,14 +4250,15 @@ function EduPlatformDemo() {
   // كل تعديل في اسم/سعر/مجانية المادة بيتبعت فورًا لجدول public.channels في
   // قاعدة البيانات، عشان يفضل محفوظ دايمًا ويظهر بنفس الشكل على أي جهاز أو
   // متصفح تاني (مش مجرد تعديل مؤقت في ذاكرة المتصفح بيتمسح مع أي Refresh).
-  function saveChannelToDb(channelId, fields) {
-    supabaseClient
-      .from("channels")
-      .update(fields)
-      .eq("id", channelId)
-      .then(({ error }) => {
-        if (error) console.error("تعذر حفظ بيانات المادة:", error.message);
-      });
+  // بترجع Promise عشان أي حقل (زي السعر) يقدر يوريك تأكيد "اتحفظت" فعلي
+  // بعد ما نتأكد إن قاعدة البيانات فعلاً قبلت التعديل، مش مجرد افتراض.
+  async function saveChannelToDb(channelId, fields) {
+    const { error } = await supabaseClient.from("channels").update(fields).eq("id", channelId);
+    if (error) {
+      console.error("تعذر حفظ بيانات المادة:", error.message);
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
   }
 
   function addChannel() {
@@ -4174,25 +4278,25 @@ function EduPlatformDemo() {
 
   function updateChannelName(channelId, name) {
     setChannels((cs) => cs.map((c) => (c.id === channelId ? { ...c, name } : c)));
-    saveChannelToDb(channelId, { name });
+    return saveChannelToDb(channelId, { name });
   }
 
   function updateChannelPrice(channelId, price) {
     setChannels((cs) => cs.map((c) => (c.id === channelId ? { ...c, price } : c)));
-    saveChannelToDb(channelId, { price: price || null });
+    return saveChannelToDb(channelId, { price: price || null });
   }
 
   // سعر "قبل الخصم" — لو اتحط، بيظهر مشطوب جنب السعر الحالي (سعر بعد الخصم)
   function updateChannelOriginalPrice(channelId, originalPrice) {
     setChannels((cs) => cs.map((c) => (c.id === channelId ? { ...c, originalPrice } : c)));
-    saveChannelToDb(channelId, { original_price: originalPrice || null });
+    return saveChannelToDb(channelId, { original_price: originalPrice || null });
   }
 
   // فتح/قفل المادة كمجانية بالكامل — لو اتفعّلت، الطلاب يقدروا يدخلوا الدروس
   // من غير كود وصول ومن غير ما يظهر أي سعر
   function updateChannelFree(channelId, free) {
     setChannels((cs) => cs.map((c) => (c.id === channelId ? { ...c, free } : c)));
-    saveChannelToDb(channelId, { free });
+    return saveChannelToDb(channelId, { free });
   }
 
   function extractEmbedUrl(input) {
@@ -5228,6 +5332,8 @@ function EduPlatformDemo() {
           deleteChannel={deleteChannel}
           updateChannelName={updateChannelName}
           updateChannelPrice={updateChannelPrice}
+          updateChannelOriginalPrice={updateChannelOriginalPrice}
+          updateChannelFree={updateChannelFree}
           newLesson={newLesson}
           setNewLesson={setNewLesson}
           addLesson={addLesson}
