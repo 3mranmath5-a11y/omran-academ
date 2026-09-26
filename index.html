@@ -4131,33 +4131,6 @@ function EduPlatformDemo() {
     } catch (e) {}
   }
 
-  // استرجاع آخر مادة وآخر فيديو كان الطالب فاتحهم، بعد ما تتأكد الجلسة
-  // (مين الطالب ده) وبعد ما تتحمل كل المواد والدروس من قاعدة البيانات،
-  // وبعد ما نعرف كمان المواد المفتوحة له (unlockedChannelIds) عشان منرجّعوش
-  // لمادة مدفوعة ملغاة أو مش بتاعته
-  useEffect(() => {
-    if (!sessionChecked || !contentLoaded || positionRestored) return;
-    if (!student.id) {
-      setPositionRestored(true);
-      return;
-    }
-    try {
-      const raw = localStorage.getItem(`omran_last_pos_${student.id}`);
-      if (raw) {
-        const saved = JSON.parse(raw);
-        const ch = channels.find((c) => c.id === saved.channelId);
-        if (ch && (ch.free || unlockedChannelIds.includes(ch.id))) {
-          setSelectedChannelId(ch.id);
-          if (saved.lessonId) {
-            const lesson = (ch.lessons || []).find((l) => l.id === saved.lessonId);
-            if (lesson) setOpenLesson(lesson);
-          }
-        }
-      }
-    } catch (e) {}
-    setPositionRestored(true);
-  }, [sessionChecked, contentLoaded, student.id, channels, unlockedChannelIds, positionRestored]);
-
   // استرجاع جلسة الطالب تلقائيًا لو كان مسجل دخول قبل كده (بدل ما يضطر
   // يسجل من جديد كل مرة يعمل Refresh)
   const [sessionChecked, setSessionChecked] = useState(false);
@@ -4199,6 +4172,33 @@ function EduPlatformDemo() {
       setSessionChecked(true);
     })();
   }, []);
+
+  // استرجاع آخر مادة وآخر فيديو كان الطالب فاتحهم، بعد ما تتأكد الجلسة
+  // (مين الطالب ده) وبعد ما تتحمل كل المواد والدروس من قاعدة البيانات،
+  // وبعد ما نعرف كمان المواد المفتوحة له (unlockedChannelIds) عشان منرجّعوش
+  // لمادة مدفوعة ملغاة أو مش بتاعته
+  useEffect(() => {
+    if (!sessionChecked || !contentLoaded || positionRestored) return;
+    if (!student.id) {
+      setPositionRestored(true);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(`omran_last_pos_${student.id}`);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        const ch = channels.find((c) => c.id === saved.channelId);
+        if (ch && (ch.free || unlockedChannelIds.includes(ch.id))) {
+          setSelectedChannelId(ch.id);
+          if (saved.lessonId) {
+            const lesson = (ch.lessons || []).find((l) => l.id === saved.lessonId);
+            if (lesson) setOpenLesson(lesson);
+          }
+        }
+      }
+    } catch (e) {}
+    setPositionRestored(true);
+  }, [sessionChecked, contentLoaded, student.id, channels, unlockedChannelIds, positionRestored]);
 
   useEffect(() => {
     setCodeInput("");
@@ -5222,6 +5222,24 @@ function EduPlatformDemo() {
     const { data: { user } } = await supabaseClient.auth.getUser();
     if (!user) {
       setCodeError("لازم تكون مسجل دخول عشان تفتح المادة. جرب تسجل دخول تاني.");
+      return;
+    }
+
+    // "علاج ذاتي" قبل تسجيل الاشتراك: لو حساب الطالب ده (لأي سبب) مفيهوش
+    // صف في جدول public.students، تسجيل الاشتراك هيفشل برسالة
+    // "foreign key constraint" لأن enrollments مربوطة بالطالب في الجدول ده.
+    // فبنتأكد إن الصف موجود (أو ننشئه من بيانات الطالب المحفوظة عندنا) قبل
+    // أي محاولة تسجيل اشتراك.
+    const { error: selfHealError } = await supabaseClient.from("students").upsert({
+      id: user.id,
+      name: student.name || "",
+      phone: student.phone || "",
+      email: student.email || user.email || "",
+    });
+    if (selfHealError) {
+      setCodeError(
+        "حصل خطأ في التأكد من حسابك، جرب تسجل خروج وتدخل تاني: " + selfHealError.message
+      );
       return;
     }
 
