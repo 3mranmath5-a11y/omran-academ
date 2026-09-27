@@ -2347,6 +2347,15 @@ function CategoryNode({ node, categories, lessons, depth, isAdmin, handlers }) {
   );
 }
 
+// دروس مربوطة بقسم اتمسح قبل كده أو مالهاش قسم أصلاً (category_id فاضي
+// أو بيشاور على قسم مش موجود). من غير الدالة دي، الدروس دي بتفضل مخفية
+// تمامًا (مش ظاهرة تحت أي قسم لا عند الأدمن ولا عند الطالب) رغم إنها لسه
+// موجودة فعليًا في القاعدة وبتتحسب في عداد "كذا فيديو".
+function getUncategorizedLessons(channel) {
+  const validIds = new Set((channel.categories || []).map((c) => c.id));
+  return (channel.lessons || []).filter((l) => !l.category_id || !validIds.has(l.category_id));
+}
+
 function splitCourseName(name) {
   const parts = (name || "").split("|");
   return {
@@ -3295,6 +3304,37 @@ function AdminDashboard({
                       }}
                     />
                   ))}
+                {getUncategorizedLessons(selectedChannel).length > 0 && (
+                  <div className="category-group">
+                    <div className="category-heading">
+                      <span>⚠️ دروس بدون قسم (قسمها الأصلي اتمسح أو مش محدد)</span>
+                    </div>
+                    {getUncategorizedLessons(selectedChannel).map((l) => (
+                      <div className="lesson-bubble" key={l.id}>
+                        <div className="lesson-left">
+                          <div className="lesson-play" style={{ cursor: "default" }}>🎥</div>
+                          <div>
+                            <div className="lesson-title">{l.title}</div>
+                            <LessonDurationInput lesson={l} onSave={(val) => updateLessonDuration(l.id, val)} />
+                          </div>
+                        </div>
+                        <select
+                          className="category-select"
+                          value=""
+                          onChange={(e) => { if (e.target.value) updateLessonCategory(l.id, e.target.value); }}
+                        >
+                          <option value="">↪ انقله لقسم...</option>
+                          {flattenCategories(selectedChannel.categories).map((cat) => (
+                            <option key={cat.id} value={cat.id}>
+                              {"— ".repeat(cat.depth)}{cat.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="delete-btn" onClick={() => deleteLesson(l.id)} aria-label="حذف">🗑</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </React.Fragment>
         </div>
@@ -4915,6 +4955,22 @@ function EduPlatformDemo() {
     );
   }
 
+  // نقل درس (كان بدون قسم، أو حابب تغيّر قسمه) لقسم تاني.
+  async function updateLessonCategory(lessonId, categoryId) {
+    const { error } = await supabaseClient.from("lessons").update({ category_id: categoryId }).eq("id", lessonId);
+    if (error) {
+      alert("حصل خطأ في نقل الدرس للقسم: " + error.message);
+      return;
+    }
+    setChannels((cs) =>
+      cs.map((c) =>
+        c.id === selectedChannelId
+          ? { ...c, lessons: c.lessons.map((l) => (l.id === lessonId ? { ...l, category_id: categoryId } : l)) }
+          : c
+      )
+    );
+  }
+
   // تبديل ترتيب درسين جنب بعض (لأعلى/لأسفل) جوه نفس القسم — بيبدّل قيمة
   // sort_order بينهم في قاعدة البيانات وفي الحالة المحلية مرة واحدة.
   async function moveLesson(lesson, direction) {
@@ -6238,6 +6294,32 @@ function EduPlatformDemo() {
                         }}
                       />
                     ))}
+                  {getUncategorizedLessons(selectedChannel).length > 0 && (
+                    <div className="category-group">
+                      <div className="category-heading">
+                        <span>دروس إضافية</span>
+                      </div>
+                      {getUncategorizedLessons(selectedChannel).map((l) => {
+                        const done = completedLessonIds.includes(l.id);
+                        return (
+                          <div className={`lesson-bubble ${done ? "lesson-done" : ""}`} key={l.id}>
+                            <div className="lesson-left">
+                              <button className="lesson-play" onClick={() => { setOpenLesson(l); saveLastPosition(selectedChannelId, l.id); }} aria-label="تشغيل">▶</button>
+                              <div>
+                                <div className="lesson-title">{l.title}</div>
+                                <div className="lesson-duration">{l.duration}</div>
+                              </div>
+                            </div>
+                            <button
+                              className="icon-btn"
+                              title={done ? "اتفرجت عليه" : "علّمه كمكتمل"}
+                              onClick={() => toggleLessonComplete(l)}
+                            >{done ? "✅" : "⭕"}</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </React.Fragment>
               ) : (
                 <div className="courses-section" style={{ padding: 0 }}>
