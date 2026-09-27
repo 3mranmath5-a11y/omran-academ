@@ -5341,66 +5341,51 @@ function EduPlatformDemo() {
     );
   }
 
+  // فتح مادة بكود وصول — بيمر على سحابة الدالة redeem-code (مش على جدول
+  // access_codes مباشرة) عشان الطالب مايبقاش عنده صلاحية يشوف أو يخترع
+  // أكواد وصول لمواد تانية. لازم تكون سحابة الدالة دي متظبطة في Supabase
+  // (backend/edge-functions/redeem-code) وتكون شغّلت 18_lock_down_write_access.sql
+  // وإلا هتيجي رسالة خطأ واضحة تقولك كده.
   async function redeemCode() {
     if (!selectedChannel) return;
     const trimmed = codeInput.trim().toUpperCase();
+    setCodeError("");
 
-    // نتحقق من الكود في قاعدة البيانات الحقيقية (مش الذاكرة المحلية)
-    // عشان يشتغل حتى لو الأدمن ولّد الكود من جهاز/تاب تاني
-    const { data: matchRows, error: fetchError } = await supabaseClient
-      .from("access_codes")
-      .select("*")
-      .eq("code", trimmed)
-      .eq("channel_id", selectedChannel.id)
-      .eq("used", false)
-      .limit(1);
-
-    if (fetchError || !matchRows || matchRows.length === 0) {
-      setCodeError("الكود غلط أو مستخدم قبل كده. تأكد منه مع الأستاذ.");
-      return;
-    }
-
-    // نسجّل اشتراك الطالب في المادة عشان يفضل مفتوح ليه حتى بعد Refresh —
-    // لازم ده ينجح قبل ما نعتبر الكود اتفتح، عشان مايحصلش إن الكود يتحرق
-    // من غير ما الاشتراك يتسجل فعليًا (زي ما كان بيحصل بسبب صلاحيات RLS ناقصة)
-    const { data: { user } } = await supabaseClient.auth.getUser();
-    if (!user) {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
       setCodeError("لازم تكون مسجل دخول عشان تفتح المادة. جرب تسجل دخول تاني.");
       return;
     }
 
-    // "علاج ذاتي" قبل تسجيل الاشتراك: لو حساب الطالب ده (لأي سبب) مفيهوش
-    // صف في جدول public.students، تسجيل الاشتراك هيفشل برسالة
-    // "foreign key constraint" لأن enrollments مربوطة بالطالب في الجدول ده.
-    // فبنتأكد إن الصف موجود (أو ننشئه من بيانات الطالب المحفوظة عندنا) قبل
-    // أي محاولة تسجيل اشتراك.
-    const { error: selfHealError } = await supabaseClient.from("students").upsert({
-      id: user.id,
-      name: student.name || "",
-      phone: student.phone || "",
-      email: student.email || user.email || "",
-    });
-    if (selfHealError) {
+    let json;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/redeem-code`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          apikey: SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          code: trimmed,
+          channelId: selectedChannel.id,
+          name: student.name || "",
+          phone: student.phone || "",
+          email: student.email || "",
+        }),
+      });
+      json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "حصل خطأ غير متوقع.");
+    } catch (e) {
       setCodeError(
-        "حصل خطأ في التأكد من حسابك، جرب تسجل خروج وتدخل تاني: " + selfHealError.message
+        e.message +
+        (e.message.includes("Failed to fetch")
+          ? "\n(تأكد إنك نشرت سحابة الدالة redeem-code في Supabase)"
+          : "")
       );
       return;
     }
-
-    const { error: enrollError } = await supabaseClient.from("enrollments").upsert({
-      student_id: user.id,
-      channel_id: selectedChannel.id,
-    });
-
-    if (enrollError) {
-      setCodeError("حصل خطأ في تسجيل الاشتراك: " + enrollError.message);
-      return;
-    }
-
-    await supabaseClient
-      .from("access_codes")
-      .update({ used: true, used_by: user.id })
-      .eq("code", trimmed);
 
     setChannels((cs) =>
       cs.map((c) =>
